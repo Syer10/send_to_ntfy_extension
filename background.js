@@ -280,3 +280,186 @@ function showBadge(text, color) {
         chrome.action.setBadgeText({ text: '' });
     }, 2000);
 }
+
+
+// Subscription management for listening to ntfy channels
+const SubscriptionsManager = {
+    ws: null,
+    connected: false,
+
+    async init() {
+        const topics = await this.getTopics();
+        if (topics.length === 0) return;
+
+        this.connectAllTopics(topics.join(','));
+    },
+
+    getTopics() {
+        return new Promise((resolve) => {
+            chrome.storage.sync.get(['topics'], (items) => {
+                const topics = items.topics || '';
+                resolve(topics.split(',').map(t => t.trim()).filter(Boolean));
+            });
+        });
+    },
+
+    connectAllTopics(topics) {
+        if (this.ws) {
+            this.ws.close();
+        }
+
+        NtfyAPI.getConfig().then(async (config) => {
+            const callbacks = {
+                onOpen: () => {
+                    console.log(`Connected to topics: ${topics}`);
+                    this.connected = true;
+                },
+                onMessage: (message) => {
+                    const topics = message.topic ? message.topic.split(',') : [];
+                    for (const topic of topics) {
+                        this.handleMessage(message, topic);
+                    }
+                },
+                onClose: () => {
+                    console.log('WebSocket closed, reconnecting in 5s');
+                    this.connected = false;
+                    setTimeout(() => this.init(), 5000);
+                },
+                onError: (error) => {
+                    console.error('WebSocket error:', error);
+                }
+            };
+
+            try {
+                this.ws = await NtfyAPI.createSubscription(config, topics, callbacks);
+            } catch (error) {
+                console.error('Failed to subscribe to topics:', error);
+                setTimeout(() => this.init(), 5000);
+            }
+        });
+    },
+
+    async toggleMute(topic) {
+        return new Promise((resolve) => {
+            chrome.storage.sync.get(['topicMuted'], (items) => {
+                const muted = items.topicMuted || {};
+                muted[topic] = !muted[topic];
+                chrome.storage.sync.set({ topicMuted: muted }, () => {
+                    resolve(!muted[topic]);
+                });
+            });
+        });
+    },
+
+    isMuted(topic) {
+        return new Promise((resolve) => {
+            chrome.storage.sync.get(['topicMuted'], (items) => {
+                const muted = items.topicMuted || {};
+                resolve(!!muted[topic]);
+            });
+        });
+    },
+
+    async removeNotification(topic, notifId) {
+        return new Promise((resolve) => {
+            chrome.storage.local.get(['subscriptionNotifications'], (items) => {
+                const notifications = items.subscriptionNotifications || {};
+                if (notifications[topic]) {
+                    notifications[topic] = notifications[topic].filter(n => n.id !== notifId);
+                    chrome.storage.local.set({ subscriptionNotifications: notifications }, resolve);
+                } else {
+                    resolve();
+                }
+            });
+        });
+    },
+
+    async clearNotifications(topic) {
+        return new Promise((resolve) => {
+            chrome.storage.local.get(['subscriptionNotifications'], (items) => {
+                const notifications = items.subscriptionNotifications || {};
+                if (notifications[topic]) {
+                    notifications[topic] = [];
+                    chrome.storage.local.set({ subscriptionNotifications: notifications }, resolve);
+                } else {
+                    resolve();
+                }
+            });
+        });
+    },
+
+    getNotifications(topic) {
+        return new Promise((resolve) => {
+            chrome.storage.local.get(['subscriptionNotifications'], (items) => {
+                const notifications = items.subscriptionNotifications || {};
+                resolve(notifications[topic] || []);
+            });
+        });
+    },
+
+    handleMessage(message, topic) {
+        if (message.event !== 'message') return;
+
+        this.storeNotification(topic, message);
+
+        this.isMuted(topic).then((muted) => {
+            if (!muted) {
+                this.showNotification(topic, message);
+
+                if (message.click) {
+                    chrome.tabs.create({ url: message.click, active: false });
+                }
+            }
+        });
+    },
+
+    storeNotification(topic, message) {
+        chrome.storage.local.get(['subscriptionNotifications'], (items) => {
+            const notifications = items.subscriptionNotifications || {};
+            if (!notifications[topic]) notifications[topic] = [];
+
+            notifications[topic].push({
+                id: message.id,
+                time: message.time,
+                event: message.event,
+                topic: topic,
+                title: message.title || `ntfy.sh/${topic}`,
+                message: message.message || '',
+                priority: message.priority,
+                tags: message.tags,
+                click: message.click,
+                received: Date.now()
+            });
+
+            if (notifications[topic].length > 100) {
+                notifications[topic] = notifications[topic].slice(-100);
+            }
+
+            chrome.storage.local.set({ subscriptionNotifications: notifications });
+        });
+    },
+
+    showNotification(topic, message) {
+        const title = message.title || `ntfy.sh/${topic}`;
+        const body = message.message || '';
+
+        chrome.notifications.create(`ntfy-${message.id}-${Date.now()}`, {
+            type: 'basic',
+            iconUrl: 'icons/icon48.png',
+            title: title,
+            message: body,
+            priority: Math.max(0, (message.priority || 3) - 2)
+        });
+    }
+};
+
+chrome.runtime.onStartup.addListener(() => {
+    SubscriptionsManager.init();
+});
+
+// Listen for storage changes to reconnect when topics, url, or token change
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && (changes.topics || changes.apiUrl || changes.accessToken)) {
+        SubscriptionsManager.init();
+    }
+});

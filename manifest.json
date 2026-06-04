@@ -8,7 +8,8 @@
     "storage",
     "unlimitedStorage",
     "contextMenus",
-    "scripting"
+    "scripting",
+    "notifications"
   ],
   "optional_host_permissions": [
     "<all_urls>"
@@ -23,7 +24,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "{cad379db-edfe-4c5e-b936-27a19156b5dc}",
+      "id": "{8d2be1ac-e096-47ce-87de-8a9fee099bf1}",
       "strict_min_version": "142.0",
       "data_collection_permissions": {
         "required": [

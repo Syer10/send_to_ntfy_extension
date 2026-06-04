@@ -202,5 +202,73 @@ const NtfyAPI = {
         }
 
         return this.sendAttachment(config, topic, { data: imageBuffer, filename });
+    },
+
+    /**
+     * Create a WebSocket connection to subscribe to a topic
+     * @param {Object} config - Configuration with apiUrl and accessToken
+     * @param {string} topic - Topic to subscribe to
+     * @param {Object} callbacks - Event callbacks
+     * @param {Function} callbacks.onOpen - Called when connection opens
+     * @param {Function} callbacks.onMessage - Called for each message
+     * @param {Function} callbacks.onClose - Called when connection closes
+     * @param {Function} callbacks.onError - Called on error
+     * @returns {Object} - { ws, close } for managing the connection
+     */
+    async createSubscription(config, topic, callbacks) {
+        const urlObj = new URL(config.apiUrl);
+        const wsProtocol = urlObj.protocol === 'https:' ? 'wss:' : 'ws:';
+        let wsUrl = `${wsProtocol}//${urlObj.host}/${topic}/ws`;
+
+        if (config.accessToken) {
+            wsUrl += `?auth=${encodeURIComponent(config.accessToken)}`;
+        }
+
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => callbacks.onOpen?.();
+        ws.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                callbacks.onMessage?.(message);
+            } catch (e) {
+                console.error('Failed to parse subscription message:', e);
+            }
+        };
+        ws.onclose = () => callbacks.onClose?.();
+        ws.onerror = (error) => callbacks.onError?.(error);
+
+        return {
+            ws,
+            close: () => ws.close()
+        };
+    },
+
+    /**
+     * Close a WebSocket subscription
+     * @param {WebSocket} ws - The WebSocket to close
+     */
+    closeSubscription(ws) {
+        ws.close();
+    },
+
+    /**
+     * Fetch message history for a topic from the ntfy API
+     * @param {Object} config - Configuration with apiUrl and accessToken
+     * @param {string} topic - Topic to fetch messages for
+     * @returns {Promise<Array>} - Array of message objects
+     */
+    async fetchMessageHistory(config, topic) {
+        const url = `${this.buildTopicUrl(config.apiUrl, topic)}/json?poll=1`;
+        const headers = this.buildAuthHeaders(config.accessToken, config.apiUrl);
+
+        const response = await fetch(url, { headers });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const text = await response.text();
+        return text.split('\n')
+            .filter(line => line.trim())
+            .map(line => JSON.parse(line))
+            .filter(msg => msg.event === 'message');
     }
 };

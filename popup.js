@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
-  // DOM Elements
+
+  // Elements
   const elements = {
     // Views
     mainView: document.getElementById('main-view'),
@@ -11,18 +12,22 @@ document.addEventListener('DOMContentLoaded', () => {
     openUrlBtn: document.getElementById('open-url-btn'),
     settingsBtn: document.getElementById('settings-btn'),
 
-    // Main form
-    topicSelect: document.getElementById('topic-select'),
-    topicDropdown: document.getElementById('topic-dropdown'),
-    topicDropdownSelected: document.getElementById('topic-dropdown-selected'),
-    topicDropdownText: document.getElementById('topic-dropdown-text'),
-    topicDropdownOptions: document.getElementById('topic-dropdown-options'),
+    // Topic list
+    topicList: document.getElementById('topic-list'),
+    topicListItems: document.getElementById('topic-list-items'),
+    topicCount: document.getElementById('topic-count'),
+    newTopicInputMain: document.getElementById('new-topic-input-main'),
+
+    // Message history
+    messageHistory: document.getElementById('message-history'),
+    emptyState: document.getElementById('empty-state'),
+
+    // Send form
     titleInput: document.getElementById('title-input'),
     messageInput: document.getElementById('message-input'),
     tagsContainer: document.getElementById('tags-container'),
     newTagInput: document.getElementById('new-tag-input'),
     tagInputHint: document.getElementById('tag-input-hint'),
-
 
     // File handling
     fileInput: document.getElementById('file-input'),
@@ -48,15 +53,9 @@ document.addEventListener('DOMContentLoaded', () => {
     status: document.getElementById('status'),
     settingsStatus: document.getElementById('settings-status'),
 
-    // Content sections
-    mainContent: document.getElementById('main-content'),
-
     // Settings inputs
     urlInput: document.getElementById('url-input'),
     tokenInput: document.getElementById('token-input'),
-    topicsContainer: document.getElementById('topics-container'),
-    newTopicInput: document.getElementById('new-topic-input'),
-    topicInputHint: document.getElementById('topic-input-hint'),
   };
 
   // State
@@ -64,22 +63,23 @@ document.addEventListener('DOMContentLoaded', () => {
     topics: [],
     apiUrl: '',
     accessToken: '',
-
     theme: 'auto',
-    pageUrl: ''
+    pageUrl: '',
+    topicMuted: {},
+    topicNames: {},
+    allNotificationsSelected: true
   };
 
   let tags = []; // State for tags
-
-  // Drag and drop state
   let dragSrcIndex = null;
   let dragType = null;
-
   let selectedPriority = 3;
   let isSettingsView = false;
   let rightCtrlDown = false;
+  let selectedTopic = null;
+  let currentMessages = [];
 
-  const STORAGE_KEYS = ['topics', 'apiUrl', 'accessToken', 'theme', 'priority', 'lastTags', 'lastTopic', 'sendAnotherEnabled'];
+  const STORAGE_KEYS = ['topics', 'apiUrl', 'accessToken', 'theme', 'priority', 'lastTags', 'lastTopic', 'sendAnotherEnabled', 'topicMuted', 'topicNames'];
 
   // Initialize
   init();
@@ -87,16 +87,15 @@ document.addEventListener('DOMContentLoaded', () => {
   async function init() {
     await loadConfig();
     await restoreDraftState();
-    await checkSessionAndCleanup(); // Check session and cleanup old files if needed
+    await checkSessionAndCleanup();
     await loadStoredFile();
     setupEventListeners();
     updateUI();
-    // Ensure priority UI is updated after config load
     updatePriorityUI();
     applyTheme();
-    // Render initial empty tags or restored ones
     renderTags();
-    // Set focus on message input when popup opens
+    updateSendFormState();
+    selectAllNotifications();
     elements.messageInput.focus();
   }
 
@@ -113,12 +112,18 @@ document.addEventListener('DOMContentLoaded', () => {
         topics: items.topics ? items.topics.split(',').map(t => t.trim()).filter(Boolean) : [],
         apiUrl: items.apiUrl || '',
         accessToken: items.accessToken || '',
-
         theme: items.theme || 'auto',
-        sendAnotherEnabled: items.sendAnotherEnabled === true
+        sendAnotherEnabled: items.sendAnotherEnabled === true,
+        topicMuted: items.topicMuted || {},
+        topicNames: items.topicNames || {}
       };
 
-      // Restore 'Send another' checkbox state
+      if (!('allNotificationsSelected' in items)) {
+        config.allNotificationsSelected = true;
+      } else {
+        config.allNotificationsSelected = items.allNotificationsSelected;
+      }
+
       elements.sendAnotherCheckbox.checked = config.sendAnotherEnabled;
 
       if (items.priority) {
@@ -130,8 +135,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (items.lastTags) {
-        // Only set tags if they weren't already set by draft restore? 
-        // Actually loadConfig runs before restoreDraftState, so draft state will overwrite if exists. Correct.
         tags = Array.isArray(items.lastTags) ? items.lastTags : [];
       }
     } catch (error) {
@@ -143,9 +146,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const newConfig = {
       apiUrl: elements.urlInput.value.trim(),
       accessToken: elements.tokenInput.value,
-      topics: config.topics.join(','), // Use current config state which is kept in sync
-
-      theme: config.theme
+      topics: config.topics.join(','),
+      theme: config.theme,
+      topicMuted: config.topicMuted,
+      topicNames: config.topicNames
     };
 
     try {
@@ -156,13 +160,8 @@ document.addEventListener('DOMContentLoaded', () => {
         topics: newConfig.topics.split(',').map(t => t.trim()).filter(Boolean)
       };
 
-      // showSettingsStatus('Saved', 'success');
-
-      // We don't want to full updateUI here because it might disrupt typing
-      // But we need to update topic dropdown if topics changed
-      updateTopicDropdown();
-      renderTopics(); // Re-render to ensure state consistency
-      updateThemeChipsUI(); // Ensure UI reflects state
+      updateTopicList();
+      updateThemeChipsUI();
 
     } catch (error) {
       showSettingsStatus('Failed to save settings', 'error');
@@ -251,7 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Open file picker in a popup window to avoid main popup closing
     const filePickerUrl = chrome.runtime.getURL(`filepicker.html?theme=${config.theme}`);
-    const width = 450;
+    const width = 610;
     const height = 340;
 
     // Get current window to center the popup
@@ -337,12 +336,288 @@ document.addEventListener('DOMContentLoaded', () => {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
+// ==================
+  // Topic List
+  // ==================
+
+  function updateUI() {
+    const isConfigured = config.apiUrl && config.topics.length > 0;
+
+    elements.settingsBtn.classList.toggle('highlight', !isConfigured);
+    elements.openUrlBtn.disabled = !config.apiUrl;
+
+    updateTopicList();
+    updatePriorityUI();
+  }
+
+  function updateTopicList() {
+    const items = elements.topicListItems;
+    items.innerHTML = '';
+
+    const allTopics = ['All notifications', ...config.topics];
+
+    elements.topicCount.textContent = allTopics.length;
+
+    allTopics.forEach((topic, index) => {
+      const item = document.createElement('div');
+      const isAllNotifications = topic === 'All notifications';
+      item.className = 'topic-list-item' + (selectedTopic === topic ? ' selected' : '') + (config.topicMuted[topic] ? ' muted' : '');
+
+      const displayName = isAllNotifications ? 'All notifications' : (config.topicNames[topic] || topic);
+
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.topic-menu-btn') || e.target.closest('.topic-dropdown-menu')) return;
+        if (isAllNotifications) {
+          selectAllNotifications();
+        } else {
+          selectTopic(topic);
+        }
+      });
+
+      const name = document.createElement('span');
+      name.className = 'topic-name';
+      name.textContent = displayName;
+
+      const menuBtn = document.createElement('button');
+      menuBtn.className = 'topic-menu-btn';
+      menuBtn.textContent = '⋮';
+      menuBtn.title = 'Options';
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleTopicMenu(topic, menuBtn, item, isAllNotifications);
+      });
+
+      item.appendChild(name);
+      item.appendChild(menuBtn);
+      items.appendChild(item);
+    });
+  }
+
+  let activeMenu = null;
+
+  function toggleTopicMenu(topic, menuBtn, item, isAllNotifications) {
+    if (activeMenu && activeMenu._topic === topic) {
+      removeTopicMenu(topic);
+      return;
+    }
+
+    if (activeMenu) {
+      removeTopicMenu(activeMenu._topic);
+    }
+
+    // Remove any existing menu
+    const existing = document.querySelector('.topic-dropdown-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.className = 'topic-dropdown-menu';
+    menu._topic = topic;
+
+    if (!isAllNotifications) {
+      const displayName = config.topicNames[topic] || topic;
+
+      const renameItem = document.createElement('div');
+      renameItem.className = 'topic-menu-item';
+      renameItem.textContent = 'Rename';
+      renameItem.addEventListener('click', () => {
+        removeTopicMenu(topic);
+        promptRenameTopic(topic);
+      });
+
+      menu.appendChild(renameItem);
+    }
+
+    const muteItem = document.createElement('div');
+    muteItem.className = 'topic-menu-item';
+    muteItem.textContent = config.topicMuted[topic] ? 'Unmute' : 'Mute';
+    muteItem.addEventListener('click', () => {
+      removeTopicMenu(topic);
+      toggleTopicMute(topic);
+    });
+    menu.appendChild(muteItem);
+
+    if (!isAllNotifications) {
+      const removeItem = document.createElement('div');
+      removeItem.className = 'topic-menu-item topic-menu-item-remove';
+      removeItem.textContent = 'Remove';
+      removeItem.addEventListener('click', () => {
+        removeTopicMenu(topic);
+        removeTopic(config.topics.indexOf(topic));
+      });
+      menu.appendChild(removeItem);
+    }
+
+    item.appendChild(menu);
+    activeMenu = menu;
+
+    // Close menu when clicking outside
+    const closeHandler = (e) => {
+      if (!item.contains(e.target)) {
+        removeTopicMenu(topic);
+        document.removeEventListener('click', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+  }
+
+  function removeTopicMenu(topic) {
+    const menu = document.querySelector('.topic-dropdown-menu');
+    if (menu && menu._topic === topic) {
+      menu.remove();
+      activeMenu = null;
+    }
+  }
+
+  function promptRenameTopic(topic) {
+    const currentName = config.topicNames[topic] || topic;
+    const newName = prompt('Rename topic:', currentName);
+    if (newName !== null && newName.trim() !== '') {
+      config.topicNames[topic] = newName.trim();
+      saveToStorage({ topicNames: config.topicNames });
+      updateTopicList();
+    }
+  }
+
+  function selectTopic(topic) {
+    selectedTopic = topic;
+    updateTopicList();
+    loadStoredFile();
+    updateSendFormState();
+    fetchMessageHistory(topic);
+    saveToStorage({ lastTopic: topic });
+  }
+
+  function selectAllNotifications() {
+    selectedTopic = 'All notifications';
+    updateTopicList();
+    loadStoredFile();
+    updateSendFormState();
+    fetchAllNotifications();
+    saveToStorage({ allNotificationsSelected: true });
+  }
+
+  async function fetchMessageHistory(topic) {
+    const apiConfig = {
+      apiUrl: config.apiUrl,
+      accessToken: config.accessToken
+    };
+
+    try {
+      const messages = await NtfyAPI.fetchMessageHistory(apiConfig, topic);
+      currentMessages = messages;
+      renderMessageHistory(messages);
+    } catch (error) {
+      console.error('Failed to fetch messages:', error);
+      elements.messageHistory.innerHTML = '<div class="empty-state">Failed to load messages</div>';
+    }
+  }
+
+  async function fetchAllNotifications() {
+    elements.messageHistory.innerHTML = '<div class="empty-state">Loading all notifications...</div>';
+    currentMessages = [];
+
+    const apiConfig = {
+      apiUrl: config.apiUrl,
+      accessToken: config.accessToken
+    };
+
+    currentMessages = await NtfyAPI.fetchMessageHistory(apiConfig, config.topics.join(','));
+    renderMessageHistory(currentMessages);
+  }
+
+  function formatMessageWithLinks(text) {
+    const urlRegex = /(https?:\/\/[^\s<]+)/g;
+    return text.replace(urlRegex, '<a href="$1" class="message-link" target="_blank" rel="noopener noreferrer">$1</a>');
+  }
+
+  function renderMessageHistory(messages) {
+    const history = elements.messageHistory;
+    history.innerHTML = '';
+
+    if (messages.length === 0) {
+      history.innerHTML = '<div class="empty-state">No messages yet</div>';
+      return;
+    }
+
+    const reversedMessages = [...messages].reverse();
+
+    reversedMessages.forEach((msg) => {
+      const card = document.createElement('div');
+      card.className = 'message-card priority-' + (msg.priority || 3);
+
+      if (msg.title) {
+        const title = document.createElement('div');
+        title.className = 'message-card-title';
+        title.textContent = msg.title;
+        card.appendChild(title);
+      }
+
+      if (msg.time) {
+        const time = document.createElement('span');
+        time.className = 'message-card-time';
+        time.textContent = new Date(msg.time * 1000).toLocaleString();
+        card.appendChild(time);
+      }
+
+      if (msg.message) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message-card-message' + (msg.title ? '' : ' no-title');
+        messageDiv.innerHTML = formatMessageWithLinks(msg.message);
+        card.appendChild(messageDiv);
+      }
+
+      if (msg.tags && msg.tags.length > 0) {
+        const tags = document.createElement('div');
+        tags.className = 'message-card-tags';
+        msg.tags.forEach(tag => {
+          const tagEl = document.createElement('span');
+          tagEl.className = 'message-tag';
+          tagEl.textContent = tag;
+          tags.appendChild(tagEl);
+        });
+        card.appendChild(tags);
+      }
+
+      if (msg.topic) {
+        const topicLabel = document.createElement('span');
+        topicLabel.className = 'message-card-topic';
+        topicLabel.textContent = config.topicNames[msg.topic] || msg.topic;
+        card.appendChild(topicLabel);
+      }
+
+      history.appendChild(card);
+    });
+  }
+
+  function toggleTopicMute(topic) {
+    config.topicMuted[topic] = !config.topicMuted[topic];
+    saveToStorage({ topicMuted: config.topicMuted });
+    updateTopicList();
+  }
+
+  function removeTopic(index) {
+    config.topics.splice(index, 1);
+    saveConfig();
+  }
+
+  function updateSendFormState() {
+    const enabled = selectedTopic !== null && selectedTopic !== '';
+    elements.titleInput.disabled = !enabled;
+    elements.messageInput.disabled = !enabled;
+    elements.fileBtn.disabled = !enabled;
+    elements.sendBtn.disabled = !enabled;
+  }
+
+  // ==================
+  // File Handling
+  // ==================
+
   async function saveDraftState() {
     const draft = {
       title: elements.titleInput.value,
       message: elements.messageInput.value,
-      topic: elements.topicSelect.value,
-      tags: tags, // Save tags array
+      topic: selectedTopic,
+      tags: tags,
       priority: selectedPriority
     };
     await new Promise(resolve => chrome.storage.local.set({ draftState: draft }, resolve));
@@ -363,13 +638,10 @@ document.addEventListener('DOMContentLoaded', () => {
             selectedPriority = draft.priority;
             updatePriorityUI();
           }
-          if (draft.topic) {
-            elements.topicSelect.value = draft.topic;
-            elements.topicDropdownText.textContent = draft.topic;
-            updateCustomDropdownSelection(draft.topic);
+          if (draft.topic && config.topics.includes(draft.topic)) {
+            selectTopic(draft.topic);
           }
 
-          // Clear draft state after restoration to prevent stale state from overwriting future sessions
           chrome.storage.local.remove(['draftState']);
         }
         resolve();
@@ -430,20 +702,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const debouncedSave = debounce(saveConfig, 1000);
 
     elements.urlInput.addEventListener('input', () => {
-      // showSettingsStatus('Saving...', 'visible');
       debouncedSave();
     });
 
     elements.tokenInput.addEventListener('input', () => {
-      // showSettingsStatus('Saving...', 'visible');
       debouncedSave();
     });
 
-
-    // Topics handling (badges)
-    elements.newTopicInput.addEventListener('keydown', handleTopicKeydown);
-    elements.newTopicInput.addEventListener('input', updateTopicInputHint);
-    elements.topicsContainer.addEventListener('click', handleTopicRemove);
+    // Topic input
+    elements.newTopicInputMain.addEventListener('keydown', handleNewTopicKeydown);
 
     // Theme chips
     elements.themeChips.addEventListener('click', (e) => {
@@ -471,23 +738,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Priority chips
     elements.priorityChips.addEventListener('click', handlePriorityClick);
 
-    // Tags handling (badges)
+    // Tags handling
     elements.newTagInput.addEventListener('keydown', handleTagKeydown);
     elements.newTagInput.addEventListener('input', updateTagInputHint);
     elements.tagsContainer.addEventListener('click', handleTagRemove);
 
     // Advanced options toggle
     elements.advancedToggle.addEventListener('click', toggleAdvancedOptions);
-
-    // Custom topic dropdown
-    elements.topicDropdownSelected.addEventListener('click', toggleTopicDropdown);
-
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-      if (!elements.topicDropdown.contains(e.target)) {
-        closeTopicDropdown();
-      }
-    });
 
     // Listen for file selection from external picker
     chrome.storage.onChanged.addListener((changes, area) => {
@@ -514,7 +771,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Populate settings fields with current config
     elements.urlInput.value = config.apiUrl;
     elements.tokenInput.value = config.accessToken;
-    renderTopics(); // Render badges
 
     updateThemeChipsUI();
 
@@ -536,8 +792,24 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.headerText.textContent = 'Send to ntfy';
     isSettingsView = false;
 
-    // Refresh UI to reflect any changes made in settings
     updateUI();
+  }
+
+  // ==================
+  // New Topic Input Handler
+  // ==================
+
+  function handleNewTopicKeydown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const value = elements.newTopicInputMain.value.trim();
+
+      if (value && !config.topics.includes(value)) {
+        config.topics.push(value);
+        saveConfig();
+        elements.newTopicInputMain.value = '';
+      }
+    }
   }
 
   // ==================
@@ -547,84 +819,11 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateUI() {
     const isConfigured = config.apiUrl && config.topics.length > 0;
 
-    // Toggle disabled state on form and highlight on settings button
-    elements.mainContent.classList.toggle('disabled', !isConfigured);
     elements.settingsBtn.classList.toggle('highlight', !isConfigured);
-
-    // Enable/disable the open URL button based on configuration
     elements.openUrlBtn.disabled = !config.apiUrl;
 
-    // Update topic dropdown
-    if (!isConfigured) {
-      elements.topicSelect.innerHTML = '<option disabled>No topics configured</option>';
-      elements.topicDropdownText.textContent = 'No topics configured';
-      elements.topicDropdownOptions.innerHTML = '';
-    } else {
-      updateTopicDropdown();
-      if (config.lastTopic) {
-        elements.topicSelect.value = config.lastTopic;
-        elements.topicDropdownText.textContent = config.lastTopic;
-        updateCustomDropdownSelection(config.lastTopic);
-      }
-    }
-
-
+    updateTopicList();
     updatePriorityUI();
-  }
-
-  function updateTopicDropdown() {
-    elements.topicSelect.innerHTML = '';
-    elements.topicDropdownOptions.innerHTML = '';
-
-    config.topics.forEach(topic => {
-      // Hidden select for form value
-      const option = document.createElement('option');
-      option.value = topic;
-      option.textContent = topic;
-      elements.topicSelect.appendChild(option);
-
-      // Custom dropdown option
-      const customOption = document.createElement('div');
-      customOption.className = 'custom-dropdown-option';
-      customOption.dataset.value = topic;
-      customOption.textContent = topic;
-      customOption.addEventListener('click', () => selectTopic(topic));
-      elements.topicDropdownOptions.appendChild(customOption);
-    });
-
-    // Update displayed text
-    if (config.topics.length > 0) {
-      const selectedTopic = elements.topicSelect.value || config.topics[0];
-      elements.topicDropdownText.textContent = selectedTopic;
-      updateCustomDropdownSelection(selectedTopic);
-    } else {
-      elements.topicDropdownText.textContent = 'No topics configured';
-    }
-  }
-
-  function selectTopic(topic) {
-    elements.topicSelect.value = topic;
-    elements.topicDropdownText.textContent = topic;
-    updateCustomDropdownSelection(topic);
-    closeTopicDropdown();
-
-    // Save the selected topic
-    config.lastTopic = topic;
-    saveToStorage({ lastTopic: topic });
-  }
-
-  function updateCustomDropdownSelection(selectedValue) {
-    elements.topicDropdownOptions.querySelectorAll('.custom-dropdown-option').forEach(opt => {
-      opt.classList.toggle('selected', opt.dataset.value === selectedValue);
-    });
-  }
-
-  function toggleTopicDropdown() {
-    elements.topicDropdown.classList.toggle('open');
-  }
-
-  function closeTopicDropdown() {
-    elements.topicDropdown.classList.remove('open');
   }
 
   function updatePriorityUI() {
@@ -823,85 +1022,15 @@ document.addEventListener('DOMContentLoaded', () => {
     saveToStorage({ priority: selectedPriority });
   }
 
-  // ==================
-  // Topics Handling
-  // ==================
-
-  function renderTopics() {
-    // Clear current badges but keep input
-    const badges = elements.topicsContainer.querySelectorAll('.topic-badge');
-    badges.forEach(b => b.remove());
-
-    // Insert badges before input
-    config.topics.forEach((topic, index) => {
-      const badge = document.createElement('div');
-      badge.className = 'topic-badge';
-      badge.textContent = topic;
-
-      setupDragAndDrop(badge, index, 'topic');
-
-      const removeSpan = document.createElement('span');
-      removeSpan.className = 'topic-remove';
-      removeSpan.dataset.index = index;
-      removeSpan.textContent = '×';
-      badge.appendChild(removeSpan);
-      elements.topicsContainer.insertBefore(badge, elements.newTopicInput);
-    });
-  }
-
-  function handleTopicKeydown(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const value = elements.newTopicInput.value.trim();
-
-      if (value) {
-        // Add topic if not exists
-        if (!config.topics.includes(value)) {
-          config.topics.push(value);
-          renderTopics();
-          saveConfig();
-        }
-        elements.newTopicInput.value = '';
-        updateTopicInputHint(); // Hide hint after clearing
-      }
-    } else if (e.key === 'Backspace' && !elements.newTopicInput.value) {
-      // Remove last topic if input is empty
-      if (config.topics.length > 0) {
-        config.topics.pop();
-        renderTopics();
-        saveConfig();
-      }
-    }
-  }
-
-  function updateTopicInputHint() {
-    elements.topicInputHint.classList.toggle('visible', elements.newTopicInput.value.length > 0);
-  }
-
-  function handleTopicRemove(e) {
-    if (e.target.classList.contains('topic-remove')) {
-      const index = parseInt(e.target.dataset.index, 10);
-      config.topics.splice(index, 1);
-      renderTopics();
-      saveConfig();
-    }
-
-    // Focus input if clicking on container
-    if (e.target === elements.topicsContainer) {
-      elements.newTopicInput.focus();
-    }
-  }
-
-  // ==================
+// ==================
   // Open ntfy URL
   // ==================
 
   function openNtfyUrl() {
     if (config.apiUrl) {
       let url = config.apiUrl;
-      const topic = elements.topicSelect.value;
+      const topic = selectedTopic;
 
-      // Only append topic if it is a valid topic (present in the list of configured topics)
       if (topic && config.topics.includes(topic)) {
         if (url.endsWith('/')) {
           url = url.slice(0, -1);
@@ -918,10 +1047,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==================
 
   async function sendNotification() {
-    const topic = elements.topicSelect.value;
+    const topic = selectedTopic;
     const message = elements.messageInput.value.trim();
     const title = elements.titleInput.value.trim();
-    const tagsString = tags.join(','); // Use tags array
+    const tagsString = tags.join(',');
 
     const storedFile = await new Promise((resolve) => {
       chrome.storage.local.get(['storedFile'], items => {

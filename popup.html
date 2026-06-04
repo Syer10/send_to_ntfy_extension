@@ -3,12 +3,13 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=350">
+  <meta name="viewport" content="width=700">
   <link rel="stylesheet" href="styles.css">
   <style>
     /* Popup-specific layout */
     body {
-      width: 350px;
+      width: 700px;
+      height: 600px;
     }
 
     .header {
@@ -53,96 +54,98 @@
 
   <!-- Main View -->
   <div class="view active" id="main-view">
-    <div class="main-content" id="main-content">
-      <!-- Topic Selection -->
-      <div class="form-group">
-        <label class="form-label">Topic</label>
-        <div class="custom-dropdown" id="topic-dropdown">
-          <div class="custom-dropdown-selected" id="topic-dropdown-selected">
-            <span id="topic-dropdown-text">Select topic...</span>
-          </div>
-          <div class="custom-dropdown-arrow">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
-              <path d="M2 4l4 4 4-4" />
-            </svg>
-          </div>
-          <div class="custom-dropdown-options" id="topic-dropdown-options"></div>
+    <div class="unified-layout" id="unified-layout">
+      <!-- Left Panel: Topic List -->
+      <div class="topic-list" id="topic-list">
+        <div class="topic-list-header">
+          <span>Topics</span>
+          <span id="topic-count" style="font-size:10px; color: var(--text-secondary);"></span>
         </div>
-        <select class="form-select" id="topic-select"></select>
-      </div>
-
-      <!-- Title (Optional) -->
-      <div class="form-group">
-        <label class="form-label" for="title-input">Title</label>
-        <input type="text" class="form-input" id="title-input">
-      </div>
-
-      <!-- Message -->
-      <div class="form-group">
-        <label class="form-label" for="message-input">Message</label>
-      </div>
-      <textarea class="form-textarea" id="message-input" rows="3"></textarea>
-
-
-      <!-- File Attachment -->
-      <div class="file-section">
-        <div class="file-input-wrapper">
-          <input type="file" class="file-input" id="file-input">
-          <button class="file-btn" id="file-btn">
-            📎 Attach file
-          </button>
-        </div>
-        <div class="file-preview" id="file-preview">
-          <span class="file-icon">📄</span>
-          <div class="file-info">
-            <div class="file-name" id="file-name"></div>
-            <div class="file-size" id="file-size"></div>
-          </div>
-          <button class="file-remove" id="file-remove" title="Remove file">×</button>
+        <div id="topic-list-items"></div>
+        <div class="topic-list-footer">
+          <input type="text" id="new-topic-input-main" placeholder="+ Add topic">
         </div>
       </div>
 
-      <!-- Advanced Options Toggle -->
-      <div class="advanced-toggle" id="advanced-toggle">
-        <span class="arrow">▶</span>
-        Advanced options
-      </div>
-
-      <!-- Advanced Options -->
-      <div class="advanced-options" id="advanced-options">
-        <!-- Priority -->
-        <div class="form-group">
-          <label class="form-label">Priority</label>
-          <div class="chips" id="priority-chips">
-            <button class="chip" data-priority="1"><span class="p-icon">⇊</span>Min</button>
-            <button class="chip" data-priority="2"><span class="p-icon">↓</span>Low</button>
-            <button class="chip active" data-priority="3">Default</button>
-            <button class="chip" data-priority="4"><span class="p-icon">↑</span>High</button>
-            <button class="chip" data-priority="5"><span class="p-icon">⇈</span>Urgent</button>
+      <!-- Right Panel: Message History + Send Form -->
+      <div class="message-history-panel">
+        <div class="message-history" id="message-history">
+          <div class="empty-state" id="empty-state">
+            Select a topic to view messages
           </div>
         </div>
-
-        <!-- Tags -->
-        <div class="form-group">
-          <label class="form-label">Tags</label>
-          <div class="tags-container" id="tags-container">
-            <input type="text" class="tag-input-field" id="new-tag-input">
-            <span class="tag-input-hint" id="tag-input-hint">Press enter to add tag</span>
+        <div class="send-form-panel" id="send-form-panel">
+          <div class="form-group">
+            <label class="form-label" for="title-input">Title</label>
+            <input type="text" class="form-input" id="title-input" disabled>
           </div>
+
+          <div class="form-group">
+            <label class="form-label" for="message-input">Message</label>
+            <textarea class="form-textarea" id="message-input" rows="2" disabled></textarea>
+          </div>
+
+          <!-- File Attachment -->
+          <div class="file-section">
+            <div class="file-input-wrapper">
+              <input type="file" class="file-input" id="file-input">
+              <button class="file-btn" id="file-btn" disabled>
+                📎 Attach file
+              </button>
+            </div>
+            <div class="file-preview" id="file-preview">
+              <span class="file-icon">📄</span>
+              <div class="file-info">
+                <div class="file-name" id="file-name"></div>
+                <div class="file-size" id="file-size"></div>
+              </div>
+              <button class="file-remove" id="file-remove" title="Remove file">×</button>
+            </div>
+          </div>
+
+          <!-- Advanced Options Toggle -->
+          <div class="advanced-toggle" id="advanced-toggle">
+            <span class="arrow">▶</span>
+            Advanced options
+          </div>
+
+          <!-- Advanced Options -->
+          <div class="advanced-options" id="advanced-options">
+            <!-- Priority -->
+            <div class="form-group">
+              <label class="form-label">Priority</label>
+              <div class="chips" id="priority-chips">
+                <button class="chip" data-priority="1"><span class="p-icon">⇊</span>Min</button>
+                <button class="chip" data-priority="2"><span class="p-icon">↓</span>Low</button>
+                <button class="chip active" data-priority="3">Default</button>
+                <button class="chip" data-priority="4"><span class="p-icon">↑</span>High</button>
+                <button class="chip" data-priority="5"><span class="p-icon">⇈</span>Urgent</button>
+              </div>
+            </div>
+
+            <!-- Tags -->
+            <div class="form-group">
+              <label class="form-label">Tags</label>
+              <div class="tags-container" id="tags-container">
+                <input type="text" class="tag-input-field" id="new-tag-input">
+                <span class="tag-input-hint" id="tag-input-hint">Press enter to add tag</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Send Footer -->
+          <div class="send-footer">
+            <div class="send-another-group">
+              <input type="checkbox" id="send-another-checkbox">
+              <label for="send-another-checkbox">Send another</label>
+            </div>
+            <button class="send-btn" id="send-btn" disabled>Send</button>
+          </div>
+
+          <!-- Status Message -->
+          <div class="status" id="status"></div>
         </div>
       </div>
-
-      <!-- Send Footer -->
-      <div class="send-footer">
-        <div class="send-another-group">
-          <input type="checkbox" id="send-another-checkbox">
-          <label for="send-another-checkbox">Send another</label>
-        </div>
-        <button class="send-btn" id="send-btn">Send</button>
-      </div>
-
-      <!-- Status Message -->
-      <div class="status" id="status"></div>
     </div>
   </div>
 
@@ -161,14 +164,6 @@
         <label class="form-label" for="token-input">Access Token (optional)</label>
         <input type="password" class="form-input" id="token-input" placeholder="tk_...">
         <p class="form-hint">For private topics or authenticated servers</p>
-      </div>
-
-      <div class="form-group">
-        <div class="form-label">Topics</div>
-        <div class="topics-container" id="topics-container">
-          <input type="text" class="topic-input-field" id="new-topic-input">
-          <span class="topic-input-hint" id="topic-input-hint">Press enter to add topic</span>
-        </div>
       </div>
 
       <div class="form-group">
