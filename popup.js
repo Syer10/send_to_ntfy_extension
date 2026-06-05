@@ -437,6 +437,23 @@ document.addEventListener('DOMContentLoaded', () => {
     menu.appendChild(muteItem);
 
     if (!isAllNotifications) {
+      const copyItem = document.createElement('div');
+      copyItem.className = 'topic-menu-item';
+      copyItem.textContent = 'Copy topic';
+      copyItem.addEventListener('click', () => {
+        const actualTopic = config.topics.find(t => {
+          const name = config.topicNames[t] || t;
+          return name === topic;
+        }) || topic;
+        navigator.clipboard.writeText(actualTopic).then(() => {
+          copyItem.textContent = 'Copied!';
+          setTimeout(() => {
+            copyItem.textContent = 'Copy topic';
+          }, 1500);
+        });
+      });
+      menu.appendChild(copyItem);
+
       const removeItem = document.createElement('div');
       removeItem.className = 'topic-menu-item topic-menu-item-remove';
       removeItem.textContent = 'Remove';
