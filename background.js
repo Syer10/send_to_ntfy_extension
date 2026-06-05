@@ -41,6 +41,11 @@ async function updateContextMenu() {
         return;
     }
 
+    // Helper to get display name for a topic
+    function getDisplayName(topic) {
+        return config.topicNames?.[topic] || topic;
+    }
+
     // Create a single parent menu "Send to ntfy" for ALL contexts
     chrome.contextMenus.create({
         id: PARENT_MENU_ID,
@@ -51,12 +56,13 @@ async function updateContextMenu() {
     if (topics.length === 1) {
         // Single topic: Text/Image/Link are direct clickable items under the parent
         const topic = topics[0];
+        const displayName = getDisplayName(topic);
 
         // 1. Page (Tab) - Always visible
         chrome.contextMenus.create({
             id: SEND_TAB_ID,
             parentId: PARENT_MENU_ID,
-            title: `Page (${topic})`,
+            title: `Page (${displayName})`,
             contexts: ['all']
         });
 
@@ -64,7 +70,7 @@ async function updateContextMenu() {
         chrome.contextMenus.create({
             id: SEND_SELECTION_ID,
             parentId: PARENT_MENU_ID,
-            title: `Text (${topic})`,
+            title: `Text (${displayName})`,
             contexts: ['selection']
         });
 
@@ -72,7 +78,7 @@ async function updateContextMenu() {
         chrome.contextMenus.create({
             id: SEND_IMAGE_ID,
             parentId: PARENT_MENU_ID,
-            title: `Image (${topic})`,
+            title: `Image (${displayName})`,
             contexts: ['image']
         });
 
@@ -80,7 +86,7 @@ async function updateContextMenu() {
         chrome.contextMenus.create({
             id: SEND_LINK_ID,
             parentId: PARENT_MENU_ID,
-            title: `Link (${topic})`,
+            title: `Link (${displayName})`,
             contexts: ['link']
         });
     } else {
@@ -98,7 +104,7 @@ async function updateContextMenu() {
             chrome.contextMenus.create({
                 id: `${SEND_TAB_ID}-${index}`,
                 parentId: `${PARENT_MENU_ID}-tab`,
-                title: topic,
+                title: getDisplayName(topic),
                 contexts: ['all']
             });
         });
@@ -115,7 +121,7 @@ async function updateContextMenu() {
             chrome.contextMenus.create({
                 id: `${SEND_SELECTION_ID}-${index}`,
                 parentId: `${PARENT_MENU_ID}-selection`,
-                title: topic,
+                title: getDisplayName(topic),
                 contexts: ['selection']
             });
         });
@@ -132,7 +138,7 @@ async function updateContextMenu() {
             chrome.contextMenus.create({
                 id: `${SEND_IMAGE_ID}-${index}`,
                 parentId: `${PARENT_MENU_ID}-image`,
-                title: topic,
+                title: getDisplayName(topic),
                 contexts: ['image']
             });
         });
@@ -149,7 +155,7 @@ async function updateContextMenu() {
             chrome.contextMenus.create({
                 id: `${SEND_LINK_ID}-${index}`,
                 parentId: `${PARENT_MENU_ID}-link`,
-                title: topic,
+                title: getDisplayName(topic),
                 contexts: ['link']
             });
         });
