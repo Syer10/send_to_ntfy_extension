@@ -595,6 +595,21 @@ document.addEventListener('DOMContentLoaded', () => {
         card.appendChild(tags);
       }
 
+      if (msg.actions && msg.actions.length > 0) {
+        const actionsContainer = document.createElement('div');
+        actionsContainer.className = 'message-card-actions';
+
+        msg.actions.forEach(action => {
+          const btn = document.createElement('button');
+          btn.className = 'message-card-btn action-btn';
+          btn.textContent = action.label || 'Action';
+          btn.addEventListener('click', () => handleAction(action));
+          actionsContainer.appendChild(btn);
+        });
+
+        card.appendChild(actionsContainer);
+      }
+
       if (msg.topic) {
         const topicLabel = document.createElement('span');
         topicLabel.className = 'message-card-topic';
@@ -604,6 +619,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
       history.appendChild(card);
     });
+  }
+
+  async function handleAction(action) {
+    if (!action) return;
+
+    const actionType = action.action || 'view';
+
+    switch (actionType) {
+      case 'view':
+        if (action.url) {
+          chrome.tabs.create({ url: action.url, active: true });
+        }
+        break;
+
+      case 'http':
+        if (action.url) {
+          const method = (action.method || 'POST').toUpperCase();
+          try {
+            await fetch(action.url, {
+              method: method,
+              headers: { 'Content-Type': 'application/json' },
+              body: action.body || ''
+            });
+            showStatus('Action sent', 'success');
+          } catch (error) {
+            showStatus('Action failed: ' + error.message, 'error');
+          }
+        }
+        break;
+
+      case 'copy':
+        if (action.value || action.text) {
+          try {
+            await navigator.clipboard.writeText(action.value || action.text);
+            showStatus('Copied to clipboard', 'success');
+          } catch (error) {
+            showStatus('Failed to copy', 'error');
+          }
+        }
+        break;
+
+      default:
+        if (action.url) {
+          chrome.tabs.create({ url: action.url, active: true });
+        }
+        break;
+    }
   }
 
   function toggleTopicMute(topic) {
