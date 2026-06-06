@@ -45,6 +45,9 @@ document.addEventListener('DOMContentLoaded', () => {
     advancedToggle: document.getElementById('advanced-toggle'),
     advancedOptions: document.getElementById('advanced-options'),
 
+    // Delay input
+    delayInput: document.getElementById('delay-input'),
+
     // Actions
     sendBtn: document.getElementById('send-btn'),
     sendAnotherCheckbox: document.getElementById('send-another-checkbox'),
@@ -1130,6 +1133,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const message = elements.messageInput.value.trim();
     const title = elements.titleInput.value.trim();
     const tagsString = tags.join(',');
+    const delay = elements.delayInput.value.trim();
+
+    // Auto-detect link in message for click URL
+    let clickUrl = '';
+    if (message) {
+      const urlRegex = /^(https?:\/\/[^\s]+)$/;
+      const match = message.match(urlRegex);
+      if (match) {
+        clickUrl = match[1];
+      }
+    }
 
     const storedFile = await new Promise((resolve) => {
       chrome.storage.local.get(['storedFile'], items => {
@@ -1172,7 +1186,9 @@ document.addEventListener('DOMContentLoaded', () => {
           message: message,
           title: title,
           priority: selectedPriority,
-          tags: tagsString
+          tags: tagsString,
+          delay: delay || undefined,
+          click: clickUrl || undefined
         });
       } else {
         // Send text notification using NtfyAPI
@@ -1180,7 +1196,9 @@ document.addEventListener('DOMContentLoaded', () => {
           message: message,
           title: title,
           priority: selectedPriority,
-          tags: tagsString
+          tags: tagsString,
+          delay: delay || undefined,
+          click: clickUrl || undefined
         });
       }
 

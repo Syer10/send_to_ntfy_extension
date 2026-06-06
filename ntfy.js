@@ -95,7 +95,7 @@ const NtfyAPI = {
      * @param {string} [options.tags] - Optional comma-separated tags
      * @returns {Promise<Response>}
      */
-    async sendNotification(config, topic, { message, title, priority, tags }) {
+    async sendNotification(config, topic, { message, title, priority, tags, delay, click }) {
         const fullUrl = this.buildTopicUrl(config.apiUrl, topic);
         const headers = this.buildAuthHeaders(config.accessToken, config.apiUrl);
 
@@ -107,6 +107,12 @@ const NtfyAPI = {
         }
         if (tags) {
             headers.set('X-Tags', this.encodeHeaderValue(tags));
+        }
+        if (delay) {
+            headers.set('X-Delay', delay.toString());
+        }
+        if (click) {
+            headers.set('X-Click', this.encodeHeaderValue(click));
         }
 
         const response = await fetch(fullUrl, {
@@ -135,7 +141,7 @@ const NtfyAPI = {
      * @param {string} [options.tags] - Optional comma-separated tags
      * @returns {Promise<Response>}
      */
-    async sendAttachment(config, topic, { data, filename, message, title, priority, tags }) {
+    async sendAttachment(config, topic, { data, filename, message, title, priority, tags, delay, click }) {
         const fullUrl = this.buildTopicUrl(config.apiUrl, topic);
         const headers = this.buildAuthHeaders(config.accessToken, config.apiUrl);
 
@@ -152,6 +158,12 @@ const NtfyAPI = {
         }
         if (tags) {
             headers.set('X-Tags', this.encodeHeaderValue(tags));
+        }
+        if (delay) {
+            headers.set('X-Delay', delay.toString());
+        }
+        if (click) {
+            headers.set('X-Click', this.encodeHeaderValue(click));
         }
 
         const response = await fetch(fullUrl, {

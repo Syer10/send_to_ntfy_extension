@@ -260,14 +260,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
             await NtfyAPI.sendNotification(config, topic, {
                 message: urlToSend,
-                title: titleToSend
+                title: titleToSend,
+                click: urlToSend
             });
             showBadge('✓', '#4CAF50');
         } else if (menuId === SEND_TAB_ID || menuId.startsWith(SEND_TAB_ID)) {
             // Send current page (tab) URL
             await NtfyAPI.sendNotification(config, topic, {
                 message: tab.url,
-                title: tab.title
+                title: tab.title,
+                click: tab.url
             });
             showBadge('✓', '#4CAF50');
         }
