@@ -598,17 +598,42 @@ document.addEventListener('DOMContentLoaded', () => {
         card.appendChild(tags);
       }
 
-      if (msg.actions && msg.actions.length > 0) {
+      if (msg.click || (msg.actions && msg.actions.length > 0)) {
         const actionsContainer = document.createElement('div');
         actionsContainer.className = 'message-card-actions';
 
-        msg.actions.forEach(action => {
-          const btn = document.createElement('button');
-          btn.className = 'message-card-btn action-btn';
-          btn.textContent = action.label || 'Action';
-          btn.addEventListener('click', () => handleAction(action));
-          actionsContainer.appendChild(btn);
-        });
+        if (msg.click) {
+          const openBtn = document.createElement('button');
+          openBtn.className = 'message-card-btn click-btn';
+          openBtn.textContent = 'Open link';
+          openBtn.addEventListener('click', () => {
+            chrome.tabs.create({ url: msg.click, active: true });
+          });
+          actionsContainer.appendChild(openBtn);
+
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'message-card-btn copy-link-btn';
+          copyBtn.textContent = 'Copy link';
+          copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(msg.click).then(() => {
+              copyBtn.textContent = 'Copied!';
+              setTimeout(() => {
+                copyBtn.textContent = 'Copy link';
+              }, 1500);
+            });
+          });
+          actionsContainer.appendChild(copyBtn);
+        }
+
+        if (msg.actions && msg.actions.length > 0) {
+          msg.actions.forEach(action => {
+            const btn = document.createElement('button');
+            btn.className = 'message-card-btn action-btn';
+            btn.textContent = action.label || 'Action';
+            btn.addEventListener('click', () => handleAction(action));
+            actionsContainer.appendChild(btn);
+          });
+        }
 
         card.appendChild(actionsContainer);
       }

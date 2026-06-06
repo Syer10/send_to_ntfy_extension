@@ -1481,6 +1481,30 @@ body {
     color: var(--primary);
 }
 
+.message-card-btn.click-btn {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+.message-card-btn.click-btn:hover {
+    background-color: var(--primary-dark);
+    border-color: var(--primary-dark);
+    color: white;
+}
+
+.message-card-btn.copy-link-btn {
+    background-color: transparent;
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.message-card-btn.copy-link-btn:hover {
+    background-color: rgba(51, 133, 116, 0.1);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
 .message-card-btn.delete-msg-btn:hover {
     border-color: #e53935;
     color: #e53935;
