@@ -1147,6 +1147,7 @@ body {
     user-select: none;
     position: relative;
     width: 100%;
+    flex-wrap: nowrap;
 }
 
 .topic-list-item:hover {
@@ -1282,6 +1283,21 @@ body {
 
 .topic-menu-item-remove:hover {
     background-color: rgba(229, 57, 53, 0.1);
+}
+
+.topic-unread-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #e53935;
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 10px;
+    min-width: 18px;
+    height: 18px;
+    flex-shrink: 0;
 }
 
 .topic-list-footer {

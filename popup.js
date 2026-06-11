@@ -59,6 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Settings inputs
     urlInput: document.getElementById('url-input'),
     tokenInput: document.getElementById('token-input'),
+    pollIntervalInput: document.getElementById('poll-interval-input'),
   };
 
   // State
@@ -70,7 +71,9 @@ document.addEventListener('DOMContentLoaded', () => {
     pageUrl: '',
     topicMuted: {},
     topicNames: {},
-    allNotificationsSelected: true
+    allNotificationsSelected: true,
+    topicLastViewed: {},
+    pollInterval: 300
   };
 
   let tags = []; // State for tags
@@ -82,7 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedTopic = null;
   let currentMessages = [];
 
-  const STORAGE_KEYS = ['topics', 'apiUrl', 'accessToken', 'theme', 'priority', 'lastTags', 'lastTopic', 'sendAnotherEnabled', 'topicMuted', 'topicNames'];
+  const STORAGE_KEYS = ['topics', 'apiUrl', 'accessToken', 'theme', 'priority', 'lastTags', 'lastTopic', 'sendAnotherEnabled', 'topicMuted', 'topicNames', 'topicLastViewed', 'pollInterval'];
 
   // Initialize
   init();
@@ -99,6 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderTags();
     updateSendFormState();
     selectAllNotifications();
+    updateBrowserBadge();
     elements.messageInput.focus();
   }
 
@@ -127,6 +131,18 @@ document.addEventListener('DOMContentLoaded', () => {
         config.allNotificationsSelected = items.allNotificationsSelected;
       }
 
+      if (items.topicLastViewed) {
+        config.topicLastViewed = items.topicLastViewed;
+      } else {
+        config.topicLastViewed = {};
+      }
+
+      if (items.pollInterval) {
+        config.pollInterval = items.pollInterval;
+      } else {
+        config.pollInterval = 300;
+      }
+
       elements.sendAnotherCheckbox.checked = config.sendAnotherEnabled;
 
       if (items.priority) {
@@ -152,7 +168,8 @@ document.addEventListener('DOMContentLoaded', () => {
       topics: config.topics.join(','),
       theme: config.theme,
       topicMuted: config.topicMuted,
-      topicNames: config.topicNames
+      topicNames: config.topicNames,
+      pollInterval: config.pollInterval
     };
 
     try {
@@ -181,6 +198,40 @@ document.addEventListener('DOMContentLoaded', () => {
       clearTimeout(timeout);
       timeout = setTimeout(later, wait);
     };
+  }
+
+  // ==================
+  // Unread Count Management
+  // ==================
+
+  function getUnreadCount(topic) {
+    const lastViewed = config.topicLastViewed[topic] || 0;
+    const notifications = config.subscriptionNotifications?.[topic] || [];
+    return notifications.filter(n => n.time > lastViewed).length;
+  }
+
+  function getTotalUnreadCount() {
+    let total = 0;
+    for (const topic of config.topics) {
+      total += getUnreadCount(topic);
+    }
+    return total;
+  }
+
+  function updateBrowserBadge() {
+    const total = getTotalUnreadCount();
+    if (total > 0) {
+      chrome.action.setBadgeText({ text: total > 99 ? '99+' : total.toString() });
+      chrome.action.setBadgeBackgroundColor({ color: '#e53935' });
+    } else {
+      chrome.action.setBadgeText({ text: '' });
+    }
+  }
+
+  function markTopicAsViewed(topic) {
+    config.topicLastViewed[topic] = Date.now();
+    saveToStorage({ topicLastViewed: config.topicLastViewed });
+    updateBrowserBadge();
   }
 
   // ==================
@@ -381,6 +432,14 @@ document.addEventListener('DOMContentLoaded', () => {
       name.className = 'topic-name';
       name.textContent = displayName;
 
+      const count = getUnreadCount(topic);
+      if (count > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'topic-unread-badge';
+        badge.textContent = count;
+        item.appendChild(badge);
+      }
+
       const menuBtn = document.createElement('button');
       menuBtn.className = 'topic-menu-btn';
       menuBtn.textContent = '⋮';
@@ -500,6 +559,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function selectTopic(topic) {
     selectedTopic = topic;
+    markTopicAsViewed(topic);
     updateTopicList();
     loadStoredFile();
     updateSendFormState();
@@ -509,6 +569,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function selectAllNotifications() {
     selectedTopic = 'All notifications';
+    // Mark all topics as viewed since we're showing all messages
+    for (const topic of config.topics) {
+      markTopicAsViewed(topic);
+    }
     updateTopicList();
     loadStoredFile();
     updateSendFormState();
@@ -816,6 +880,18 @@ document.addEventListener('DOMContentLoaded', () => {
       debouncedSave();
     });
 
+    // Poll interval input
+    elements.pollIntervalInput.addEventListener('input', () => {
+      const value = parseInt(elements.pollIntervalInput.value, 10);
+      if (value && value >= 30) {
+        config.pollInterval = value;
+        saveToStorage({ pollInterval: value });
+        // Notify background to update alarm
+        chrome.runtime.sendMessage({ action: 'updateAlarm' });
+      }
+      // Hide hint after clearing
+    });
+
     // Topic input
     elements.newTopicInputMain.addEventListener('keydown', handleNewTopicKeydown);
 
@@ -878,6 +954,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Populate settings fields with current config
     elements.urlInput.value = config.apiUrl;
     elements.tokenInput.value = config.accessToken;
+    elements.pollIntervalInput.value = config.pollInterval || 300;
 
     updateThemeChipsUI();
 

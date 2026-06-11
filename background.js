@@ -9,22 +9,65 @@ if (typeof importScripts === 'function') {
 const PARENT_MENU_ID = 'ntfy-parent';
 const SEND_SELECTION_ID = 'ntfy-send-selection';
 const SEND_IMAGE_ID = 'ntfy-send-image';
-const SEND_LINK_ID = 'ntfy-send-link'; // Replaced SEND_PAGE_ID
+const SEND_LINK_ID = 'ntfy-send-link';
 const SEND_TAB_ID = 'ntfy-send-tab';
+
+const DEFAULT_POLL_INTERVAL = 300; // 5 minutes in seconds
 
 // Initialize context menu on install and startup
 chrome.runtime.onInstalled.addListener(() => {
     updateContextMenu();
+    setupAlarm();
 });
 
 chrome.runtime.onStartup.addListener(() => {
     updateContextMenu();
+    setupAlarm();
 });
 
-// Listen for storage changes to update menu when topics change
+// Handle storage changes to update alarm interval
 chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes.topics) {
-        updateContextMenu();
+    if (area === 'sync') {
+        if (changes.topics || changes.apiUrl || changes.accessToken) {
+            updateContextMenu();
+        }
+        if (changes.pollInterval) {
+            setupAlarm();
+        }
+    }
+});
+
+// Handle messages from popup to update alarm
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'updateAlarm') {
+        setupAlarm();
+    }
+});
+
+// ========================================
+// Alarm-based polling (replaces WebSocket)
+// ========================================
+
+async function setupAlarm() {
+    try {
+        const config = await NtfyAPI.getConfig();
+        const pollInterval = config.pollInterval || DEFAULT_POLL_INTERVAL;
+
+        await chrome.alarms.clear('ntfy-poll');
+
+        await chrome.alarms.create('ntfy-poll', {
+            periodInMinutes: pollInterval / 60
+        });
+
+        console.log(`Polling alarm set: every ${pollInterval}s`);
+    } catch (error) {
+        console.error('Failed to setup alarm:', error);
+    }
+}
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name === 'ntfy-poll') {
+        await pollForNewMessages();
     }
 });
 
@@ -289,142 +332,115 @@ function showBadge(text, color) {
     }, 2000);
 }
 
+async function pollForNewMessages() {
+    const config = await NtfyAPI.getConfig();
+    const topics = config.topics;
 
-// Subscription management for listening to ntfy channels
-const SubscriptionsManager = {
-    ws: null,
-    connected: false,
+    if (!config.apiUrl || topics.length === 0) {
+        return;
+    }
 
-    async init() {
-        const topics = await this.getTopics();
-        if (topics.length === 0) return;
+    const topicsJoined = topics.join(',');
 
-        this.connectAllTopics(topics.join(','));
-    },
+    // Get the last message ID for this topic
+    const lastMessageId = await getLastMessageId(topicsJoined);
+    const isFirstPoll = !lastMessageId;
 
-    getTopics() {
-        return new Promise((resolve) => {
-            chrome.storage.sync.get(['topics'], (items) => {
-                const topics = items.topics || '';
-                resolve(topics.split(',').map(t => t.trim()).filter(Boolean));
-            });
-        });
-    },
+    try {
+        // On first poll, fetch all messages (no since parameter)
+        // On subsequent polls, use the last message ID to get only new messages
+        const messages = await NtfyAPI.fetchMessageHistory(config, topicsJoined, isFirstPoll ? null : lastMessageId);
 
-    connectAllTopics(topics) {
-        if (this.ws) {
-            this.ws.close();
+        // On first poll, cache all messages and store the last ID
+        if (isFirstPoll) {
+            for (const message of messages) {
+                if (message.event !== 'message') continue;
+                const messageTopics = message.topic ? message.topic.split(',') : [topicsJoined];
+                for (const topic of messageTopics) {
+                    await storeNotification(topic, message);
+                }
+            }
+            // Store the last message ID
+            if (messages.length > 0) {
+                const lastMsg = messages[messages.length - 1];
+                await setLastMessageId(topicsJoined, lastMsg.id);
+            }
+            console.log(`First poll complete: ${messages.length} messages cached`);
+            return;
         }
 
-        NtfyAPI.getConfig().then(async (config) => {
-            const callbacks = {
-                onOpen: () => {
-                    console.log(`Connected to topics: ${topics}`);
-                    this.connected = true;
-                },
-                onMessage: (message) => {
-                    const topics = message.topic ? message.topic.split(',') : [];
-                    for (const topic of topics) {
-                        this.handleMessage(message, topic);
-                    }
-                },
-                onClose: () => {
-                    console.log('WebSocket closed, reconnecting in 5s');
-                    this.connected = false;
-                    setTimeout(() => this.init(), 5000);
-                },
-                onError: (error) => {
-                    console.error('WebSocket error:', error);
-                }
-            };
+        // Subsequent polls: only process new messages
+        for (const message of messages) {
+            if (message.event !== 'message') continue;
 
-            try {
-                this.ws = await NtfyAPI.createSubscription(config, topics, callbacks);
-            } catch (error) {
-                console.error('Failed to subscribe to topics:', error);
-                setTimeout(() => this.init(), 5000);
-            }
-        });
-    },
+            const messageTopics = message.topic ? message.topic.split(',') : [topicsJoined];
 
-    async toggleMute(topic) {
-        return new Promise((resolve) => {
-            chrome.storage.sync.get(['topicMuted'], (items) => {
-                const muted = items.topicMuted || {};
-                muted[topic] = !muted[topic];
-                chrome.storage.sync.set({ topicMuted: muted }, () => {
-                    resolve(!muted[topic]);
-                });
-            });
-        });
-    },
+            for (const topic of messageTopics) {
+                const isMuted = await isTopicMuted(topic);
+                if (isMuted) continue;
 
-    isMuted(topic) {
-        return new Promise((resolve) => {
-            chrome.storage.sync.get(['topicMuted'], (items) => {
-                const muted = items.topicMuted || {};
-                resolve(!!muted[topic]);
-            });
-        });
-    },
-
-    async removeNotification(topic, notifId) {
-        return new Promise((resolve) => {
-            chrome.storage.local.get(['subscriptionNotifications'], (items) => {
-                const notifications = items.subscriptionNotifications || {};
-                if (notifications[topic]) {
-                    notifications[topic] = notifications[topic].filter(n => n.id !== notifId);
-                    chrome.storage.local.set({ subscriptionNotifications: notifications }, resolve);
-                } else {
-                    resolve();
-                }
-            });
-        });
-    },
-
-    async clearNotifications(topic) {
-        return new Promise((resolve) => {
-            chrome.storage.local.get(['subscriptionNotifications'], (items) => {
-                const notifications = items.subscriptionNotifications || {};
-                if (notifications[topic]) {
-                    notifications[topic] = [];
-                    chrome.storage.local.set({ subscriptionNotifications: notifications }, resolve);
-                } else {
-                    resolve();
-                }
-            });
-        });
-    },
-
-    getNotifications(topic) {
-        return new Promise((resolve) => {
-            chrome.storage.local.get(['subscriptionNotifications'], (items) => {
-                const notifications = items.subscriptionNotifications || {};
-                resolve(notifications[topic] || []);
-            });
-        });
-    },
-
-    handleMessage(message, topic) {
-        if (message.event !== 'message') return;
-
-        this.storeNotification(topic, message);
-
-        this.isMuted(topic).then((muted) => {
-            if (!muted) {
-                this.showNotification(topic, message);
+                await storeNotification(topic, message);
+                await showNotification(topic, message);
 
                 if (message.click) {
-                    chrome.tabs.create({ url: message.click, active: false });
+                    chrome.tabs.create({ url: message.click, active: true });
                 }
             }
-        });
-    },
+        }
 
-    storeNotification(topic, message) {
+        // Update last message ID
+        if (messages.length > 0) {
+            const lastMsg = messages[messages.length - 1];
+            await setLastMessageId(topicsJoined, lastMsg.id);
+        }
+
+        console.log(`Polling complete: ${messages.length} new messages`);
+    } catch (error) {
+        console.error('Polling failed:', error);
+    }
+}
+
+function getLastMessageId(topics) {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['lastMessageId'], (items) => {
+            resolve(items.lastMessageId?.[topics] || null);
+        });
+    });
+}
+
+function setLastMessageId(topics, messageId) {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['lastMessageId'], (items) => {
+            const lastMessageId = items.lastMessageId || {};
+            lastMessageId[topics] = messageId;
+            chrome.storage.local.set({ lastMessageId }, () => {
+                resolve();
+            });
+        });
+    });
+}
+
+function isTopicMuted(topic) {
+    return new Promise((resolve) => {
+        chrome.storage.sync.get(['topicMuted'], (items) => {
+            const muted = items.topicMuted || {};
+            resolve(!!muted[topic]);
+        });
+    });
+}
+
+function storeNotification(topic, message) {
+    return new Promise((resolve) => {
         chrome.storage.local.get(['subscriptionNotifications'], (items) => {
             const notifications = items.subscriptionNotifications || {};
             if (!notifications[topic]) notifications[topic] = [];
+
+            // Check if we already have this message ID
+            const exists = notifications[topic].some(n => n.id === message.id);
+            if (exists) {
+                resolve();
+                return;
+            }
 
             notifications[topic].push({
                 id: message.id,
@@ -443,31 +459,22 @@ const SubscriptionsManager = {
                 notifications[topic] = notifications[topic].slice(-100);
             }
 
-            chrome.storage.local.set({ subscriptionNotifications: notifications });
+            chrome.storage.local.set({ subscriptionNotifications: notifications }, () => {
+                resolve();
+            });
         });
-    },
+    });
+}
 
-    showNotification(topic, message) {
-        const title = message.title || `ntfy.sh/${topic}`;
-        const body = message.message || '';
+function showNotification(topic, message) {
+    const title = message.title || `ntfy.sh/${topic}`;
+    const body = message.message || '';
 
-        chrome.notifications.create(`ntfy-${message.id}-${Date.now()}`, {
-            type: 'basic',
-            iconUrl: 'icons/icon48.png',
-            title: title,
-            message: body,
-            priority: Math.max(0, (message.priority || 3) - 2)
-        });
-    }
-};
-
-chrome.runtime.onStartup.addListener(() => {
-    SubscriptionsManager.init();
-});
-
-// Listen for storage changes to reconnect when topics, url, or token change
-chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && (changes.topics || changes.apiUrl || changes.accessToken)) {
-        SubscriptionsManager.init();
-    }
-});
+    chrome.notifications.create(`ntfy-${message.id}-${Date.now()}`, {
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: title,
+        message: body,
+        priority: Math.max(0, (message.priority || 3) - 2)
+    });
+}

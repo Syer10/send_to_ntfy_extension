@@ -8,11 +8,12 @@ const NtfyAPI = {
      */
     async getConfig() {
         return new Promise((resolve) => {
-            chrome.storage.sync.get(['apiUrl', 'accessToken', 'topics'], (items) => {
+            chrome.storage.sync.get(['apiUrl', 'accessToken', 'topics', 'pollInterval'], (items) => {
                 resolve({
                     apiUrl: items.apiUrl || '',
                     accessToken: items.accessToken || '',
-                    topics: items.topics ? items.topics.split(',').map(t => t.trim()).filter(Boolean) : []
+                    topics: items.topics ? items.topics.split(',').map(t => t.trim()).filter(Boolean) : [],
+                    pollInterval: items.pollInterval || 300
                 });
             });
         });
@@ -268,10 +269,14 @@ const NtfyAPI = {
      * Fetch message history for a topic from the ntfy API
      * @param {Object} config - Configuration with apiUrl and accessToken
      * @param {string} topic - Topic to fetch messages for
+     * @param {string} [since] - Optional timestamp (Unix time in seconds or duration) or message id to fetch messages since 
      * @returns {Promise<Array>} - Array of message objects
      */
-    async fetchMessageHistory(config, topic) {
-        const url = `${this.buildTopicUrl(config.apiUrl, topic)}/json?poll=1`;
+    async fetchMessageHistory(config, topic, since) {
+        let url = `${this.buildTopicUrl(config.apiUrl, topic)}/json?poll=1`;
+        if (since) {
+            url += `&since=${since}`;
+        }
         const headers = this.buildAuthHeaders(config.accessToken, config.apiUrl);
 
         const response = await fetch(url, { headers });

@@ -5,6 +5,7 @@
   "description": "Send notifications to ntfy.sh with file attachments, priority, and tags",
   "permissions": [
     "activeTab",
+    "alarms",
     "storage",
     "unlimitedStorage",
     "contextMenus",
