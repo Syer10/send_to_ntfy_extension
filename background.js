@@ -37,7 +37,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
 });
 
-// Handle messages from popup to update alarm
+// Handle messages from popup to update alarm or reset unread counts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'updateAlarm') {
         setupAlarm();
@@ -353,13 +353,6 @@ async function pollForNewMessages() {
 
         // On first poll, cache all messages and store the last ID
         if (isFirstPoll) {
-            for (const message of messages) {
-                if (message.event !== 'message') continue;
-                const messageTopics = message.topic ? message.topic.split(',') : [topicsJoined];
-                for (const topic of messageTopics) {
-                    await storeNotification(topic, message);
-                }
-            }
             // Store the last message ID
             if (messages.length > 0) {
                 const lastMsg = messages[messages.length - 1];
@@ -379,7 +372,14 @@ async function pollForNewMessages() {
                 const isMuted = await isTopicMuted(topic);
                 if (isMuted) continue;
 
-                await storeNotification(topic, message);
+                // Increment per-topic unread count in storage
+                const topicUnread = await getTopicUnreadCount(topic);
+                await setTopicUnreadCount(topic, topicUnread + 1);
+
+                // Also increment total unread
+                const totalUnread = await getUnreadCount();
+                await setUnreadCount(totalUnread + 1);
+
                 await showNotification(topic, message);
 
                 if (message.click) {
@@ -394,10 +394,60 @@ async function pollForNewMessages() {
             await setLastMessageId(topicsJoined, lastMsg.id);
         }
 
+        // Update badge with total unread count from storage
+        const unreadCount = await getUnreadCount();
+        await updateBadge(unreadCount);
+
         console.log(`Polling complete: ${messages.length} new messages`);
     } catch (error) {
         console.error('Polling failed:', error);
     }
+}
+
+async function updateBadge(count) {
+    if (count > 0) {
+        chrome.action.setBadgeText({ text: count > 99 ? '99+' : count.toString() });
+        chrome.action.setBadgeBackgroundColor({ color: '#e53935' });
+    } else {
+        chrome.action.setBadgeText({ text: '' });
+    }
+}
+
+function getUnreadCount() {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['unreadCount'], (items) => {
+            resolve(items.unreadCount || 0);
+        });
+    });
+}
+
+function setUnreadCount(count) {
+    return new Promise((resolve) => {
+        chrome.storage.local.set({ unreadCount: count }, () => {
+            resolve();
+        });
+    });
+}
+
+function getTopicUnreadCount(topic) {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['topicUnreadCounts'], (items) => {
+            const counts = items.topicUnreadCounts || {};
+            resolve(counts[topic] || 0);
+        });
+    });
+}
+
+function setTopicUnreadCount(topic, count) {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['topicUnreadCounts'], (items) => {
+            const counts = items.topicUnreadCounts || {};
+            counts[topic] = count;
+            chrome.storage.local.set({ topicUnreadCounts: counts }, () => {
+                resolve();
+            });
+        });
+    });
 }
 
 function getLastMessageId(topics) {
@@ -425,43 +475,6 @@ function isTopicMuted(topic) {
         chrome.storage.sync.get(['topicMuted'], (items) => {
             const muted = items.topicMuted || {};
             resolve(!!muted[topic]);
-        });
-    });
-}
-
-function storeNotification(topic, message) {
-    return new Promise((resolve) => {
-        chrome.storage.local.get(['subscriptionNotifications'], (items) => {
-            const notifications = items.subscriptionNotifications || {};
-            if (!notifications[topic]) notifications[topic] = [];
-
-            // Check if we already have this message ID
-            const exists = notifications[topic].some(n => n.id === message.id);
-            if (exists) {
-                resolve();
-                return;
-            }
-
-            notifications[topic].push({
-                id: message.id,
-                time: message.time,
-                event: message.event,
-                topic: topic,
-                title: message.title || `ntfy.sh/${topic}`,
-                message: message.message || '',
-                priority: message.priority,
-                tags: message.tags,
-                click: message.click,
-                received: Date.now()
-            });
-
-            if (notifications[topic].length > 100) {
-                notifications[topic] = notifications[topic].slice(-100);
-            }
-
-            chrome.storage.local.set({ subscriptionNotifications: notifications }, () => {
-                resolve();
-            });
         });
     });
 }

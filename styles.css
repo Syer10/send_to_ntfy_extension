@@ -1526,6 +1526,15 @@ body {
     color: #e53935;
 }
 
+.message-card-unread {
+    background-color: rgba(51, 133, 116, 0.08);
+    border-left-width: 5px;
+}
+
+.message-card-unread .message-card-title {
+    font-weight: 700;
+}
+
 .send-form-panel {
     border-top: 1px solid var(--border-color);
     padding: 12px;

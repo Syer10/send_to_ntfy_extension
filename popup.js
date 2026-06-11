@@ -71,7 +71,6 @@ document.addEventListener('DOMContentLoaded', () => {
     pageUrl: '',
     topicMuted: {},
     topicNames: {},
-    allNotificationsSelected: true,
     topicLastViewed: {},
     pollInterval: 300
   };
@@ -85,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedTopic = null;
   let currentMessages = [];
 
-  const STORAGE_KEYS = ['topics', 'apiUrl', 'accessToken', 'theme', 'priority', 'lastTags', 'lastTopic', 'sendAnotherEnabled', 'topicMuted', 'topicNames', 'topicLastViewed', 'pollInterval'];
+  const STORAGE_KEYS = ['topics', 'apiUrl', 'accessToken', 'theme', 'priority', 'lastTags', 'sendAnotherEnabled', 'topicMuted', 'topicNames', 'pollInterval', 'lastViewedMessageId'];
 
   // Initialize
   init();
@@ -103,7 +102,22 @@ document.addEventListener('DOMContentLoaded', () => {
     updateSendFormState();
     selectAllNotifications();
     updateBrowserBadge();
+    updateBrowserBadgeFromStorage();
     elements.messageInput.focus();
+  }
+
+  // Load unread count from storage and update badge
+  async function updateBrowserBadgeFromStorage() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['unreadCount'], (items) => {
+        const count = items.unreadCount || 0;
+        if (count > 0) {
+          chrome.action.setBadgeText({ text: count > 99 ? '99+' : count.toString() });
+          chrome.action.setBadgeBackgroundColor({ color: '#e53935' });
+        }
+        resolve();
+      });
+    });
   }
 
   // ==================
@@ -125,32 +139,22 @@ document.addEventListener('DOMContentLoaded', () => {
         topicNames: items.topicNames || {}
       };
 
-      if (!('allNotificationsSelected' in items)) {
-        config.allNotificationsSelected = true;
-      } else {
-        config.allNotificationsSelected = items.allNotificationsSelected;
-      }
-
-      if (items.topicLastViewed) {
-        config.topicLastViewed = items.topicLastViewed;
-      } else {
-        config.topicLastViewed = {};
-      }
-
       if (items.pollInterval) {
         config.pollInterval = items.pollInterval;
       } else {
         config.pollInterval = 300;
       }
 
+      if (items.lastViewedMessageId) {
+        config.lastViewedMessageId = items.lastViewedMessageId;
+      } else {
+        config.lastViewedMessageId = {};
+      }
+
       elements.sendAnotherCheckbox.checked = config.sendAnotherEnabled;
 
       if (items.priority) {
         selectedPriority = items.priority;
-      }
-
-      if (items.lastTopic && config.topics.includes(items.lastTopic)) {
-        config.lastTopic = items.lastTopic;
       }
 
       if (items.lastTags) {
@@ -205,32 +209,39 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==================
 
   function getUnreadCount(topic) {
-    const lastViewed = config.topicLastViewed[topic] || 0;
-    const notifications = config.subscriptionNotifications?.[topic] || [];
-    return notifications.filter(n => n.time > lastViewed).length;
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['topicUnreadCounts'], (items) => {
+        const counts = items.topicUnreadCounts || {};
+        resolve(counts[topic] || 0);
+      });
+    });
   }
 
   function getTotalUnreadCount() {
-    let total = 0;
-    for (const topic of config.topics) {
-      total += getUnreadCount(topic);
-    }
-    return total;
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['unreadCount'], (items) => {
+        resolve(items.unreadCount || 0);
+      });
+    });
   }
 
   function updateBrowserBadge() {
-    const total = getTotalUnreadCount();
-    if (total > 0) {
-      chrome.action.setBadgeText({ text: total > 99 ? '99+' : total.toString() });
-      chrome.action.setBadgeBackgroundColor({ color: '#e53935' });
-    } else {
-      chrome.action.setBadgeText({ text: '' });
-    }
+    getTotalUnreadCount().then((total) => {
+      if (total > 0) {
+        chrome.action.setBadgeText({ text: total > 99 ? '99+' : total.toString() });
+        chrome.action.setBadgeBackgroundColor({ color: '#e53935' });
+      } else {
+        chrome.action.setBadgeText({ text: '' });
+      }
+    });
   }
 
-  function markTopicAsViewed(topic) {
-    config.topicLastViewed[topic] = Date.now();
-    saveToStorage({ topicLastViewed: config.topicLastViewed });
+  function markTopicAsViewed(topic, lastMessageId) {
+    if (!config.lastViewedMessageId) {
+      config.lastViewedMessageId = {};
+    }
+    config.lastViewedMessageId[topic] = lastMessageId || 0;
+    saveToStorage({ lastViewedMessageId: config.lastViewedMessageId });
     updateBrowserBadge();
   }
 
@@ -432,13 +443,15 @@ document.addEventListener('DOMContentLoaded', () => {
       name.className = 'topic-name';
       name.textContent = displayName;
 
-      const count = getUnreadCount(topic);
-      if (count > 0) {
-        const badge = document.createElement('span');
-        badge.className = 'topic-unread-badge';
-        badge.textContent = count;
-        item.appendChild(badge);
-      }
+      // Load unread badge asynchronously
+      getUnreadCount(topic).then((count) => {
+        if (count > 0) {
+          const badge = document.createElement('span');
+          badge.className = 'topic-unread-badge';
+          badge.textContent = count;
+          item.insertBefore(badge, name.nextSibling);
+        }
+      });
 
       const menuBtn = document.createElement('button');
       menuBtn.className = 'topic-menu-btn';
@@ -557,27 +570,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function selectTopic(topic) {
+async function selectTopic(topic) {
     selectedTopic = topic;
-    markTopicAsViewed(topic);
+    await fetchMessageHistory(topic);
+    // Mark as viewed with the last message ID from currentMessages
+    const topicMessages = currentMessages.filter(m => m.topic === topic);
+    const lastId = topicMessages.length > 0 ? topicMessages[topicMessages.length - 1].id : 0;
+    markTopicAsViewed(topic, lastId);
+    resetTopicUnreadCount(topic);
     updateTopicList();
     loadStoredFile();
     updateSendFormState();
-    fetchMessageHistory(topic);
-    saveToStorage({ lastTopic: topic });
   }
 
-  function selectAllNotifications() {
+  async function selectAllNotifications() {
     selectedTopic = 'All notifications';
-    // Mark all topics as viewed since we're showing all messages
-    for (const topic of config.topics) {
-      markTopicAsViewed(topic);
-    }
+    await fetchAllNotifications();
+    // Reset unread count when viewing all notifications
+    resetUnreadCount();
+    // Don't update lastViewedMessageId
     updateTopicList();
     loadStoredFile();
     updateSendFormState();
-    fetchAllNotifications();
-    saveToStorage({ allNotificationsSelected: true });
+
+  }
+
+  function resetTopicUnreadCount(topic) {
+    chrome.storage.local.get(['topicUnreadCounts'], (items) => {
+        const counts = items.topicUnreadCounts || {};
+        if (counts[topic]) {
+            // Decrement total unread by the amount being cleared
+            getUnreadCount().then((totalUnread) => {
+                const amount = counts[topic];
+                counts[topic] = 0;
+                chrome.storage.local.set({ topicUnreadCounts: counts }, () => {
+                    setUnreadCount(Math.max(0, totalUnread - amount));
+                    resolve();
+                });
+            });
+        } else {
+            resolve();
+        }
+    });
+  }
+
+  function resetAllUnreadCount() {
+      chrome.storage.local.set({ unreadCount: 0 }, () => {
+          chrome.storage.local.get(['topicUnreadCounts'], (items) => {
+              chrome.storage.local.set({ topicUnreadCounts: {} }, () => {
+                  resolve();
+              });
+          });
+      });
+  }
+
+  function resetUnreadCount() {
+    chrome.storage.local.set({ unreadCount: 0 }, () => {
+      chrome.action.setBadgeText({ text: '' });
+    });
   }
 
   async function fetchMessageHistory(topic) {
@@ -624,10 +674,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const reversedMessages = [...messages].reverse();
+    // Get the last viewed message ID for the current topic
+    const lastViewedId = selectedTopic !== 'All notifications' ? config.lastViewedMessageId?.[selectedTopic] : 0;
+    // Find the index of the last viewed message
+    const lastViewedIndex = reversedMessages.findIndex(n => n.id === lastViewedId);
+    // Mark everything before as unread
+    const isAllNotifications = selectedTopic === 'All notifications';
 
-    reversedMessages.forEach((msg) => {
+    reversedMessages.forEach((msg, index) => {
       const card = document.createElement('div');
       card.className = 'message-card priority-' + (msg.priority || 3);
+
+      // Add unread class if this message is before the last viewed
+      if (!isAllNotifications && lastViewedIndex !== -1 && index < lastViewedIndex) {
+        card.classList.add('message-card-unread');
+      }
 
       if (msg.title) {
         const title = document.createElement('div');
